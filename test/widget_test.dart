@@ -1,30 +1,53 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:translink_customer/main.dart';
+import 'package:translink_customer/features/auth/presentation/screens/customer_registration_screen.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('Customer registration screen renders existing form', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: CustomerRegistrationScreen(phoneNumber: '+919999999999'),
+        ),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Complete Profile'), findsOneWidget);
+    expect(find.text('Full Name *'), findsOneWidget);
+    expect(find.text('Email Address (Optional)'), findsOneWidget);
+    expect(find.text('Gender *'), findsOneWidget);
+    expect(find.text('Save & Continue'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+  testWidgets('Customer registration validates required name without network call', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: CustomerRegistrationScreen(phoneNumber: '+919999999999'),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Save & Continue'));
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Kripya apna naam dalein'), findsOneWidget);
+  });
+
+  testWidgets('Customer registration requires gender after name is entered', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          home: CustomerRegistrationScreen(phoneNumber: '+919999999999'),
+        ),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField).first, 'Test Customer');
+    await tester.tap(find.text('Save & Continue'));
+    await tester.pump();
+
+    expect(find.text('Kripya apna gender select karein'), findsOneWidget);
   });
 }
