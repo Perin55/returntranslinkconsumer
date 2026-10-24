@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../../services/otp_service.dart';
 
 class PhoneLoginScreen extends StatefulWidget {
   const PhoneLoginScreen({super.key});
@@ -13,7 +12,6 @@ class PhoneLoginScreen extends StatefulWidget {
 }
 
 class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
-  final OtpService _otpService = OtpService();
   final _phoneController = TextEditingController();
   final _otpControllers = List.generate(6, (_) => TextEditingController());
   final _otpFocusNodes = List.generate(6, (_) => FocusNode());
@@ -58,10 +56,13 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     });
 
     try {
-      final phoneRes = await _otpService.sendOtp(fullPhone);
+      // Use Supabase Auth directly so OTP delivery and verification create
+      // a real Supabase session for subsequent RLS-protected profile writes.
+      await Supabase.instance.client.auth.signInWithOtp(phone: fullPhone);
+      if (!mounted) return;
       setState(() {
         _isOtpSent = true;
-        _formattedFullPhone = phoneRes;
+        _formattedFullPhone = fullPhone;
       });
     } catch (e) {
       setState(() {
@@ -85,21 +86,35 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
     });
 
     try {
-      final verifiedPhone = await _otpService.verifyOtp(_formattedFullPhone, enteredOtp);
-      
-      // Check if user exists in customers table
-      final customerData = await Supabase.instance.client
-          .from('customers')
-          .select()
-          .eq('phone_number', verifiedPhone)
+      final supabase = Supabase.instance.client;
+      final authResponse = await supabase.auth.verifyOTP(
+        phone: _formattedFullPhone,
+        token: enteredOtp,
+        type: OtpType.sms,
+      );
+      final user = authResponse.user ?? supabase.auth.currentUser;
+      if (user == null) {
+        throw const AuthException('OTP verified but no Supabase session was created. Please try again.');
+      }
+
+      final verifiedPhone = user.phone ?? _formattedFullPhone;
+      // Customer-specific data belongs in customer_registration. A common
+      // profile may already exist because this phone is also a Partner.
+      final customerData = await supabase
+          .from('customer_registration')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .maybeSingle();
+      final commonProfile = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('auth_user_id', user.id)
           .maybeSingle();
 
       if (mounted) {
-        if (customerData == null) {
-          // New user, go to registration
+        if (customerData == null || commonProfile == null) {
           context.go('/registration', extra: verifiedPhone);
         } else {
-          // Existing user, save login and go to home
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('logged_in_phone', verifiedPhone);
           if (mounted) context.go('/customer_search');
