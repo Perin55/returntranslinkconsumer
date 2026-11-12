@@ -46,51 +46,20 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
     });
 
     try {
-      // Basic filter search for demo purposes.
-      // Fetch requirements first to avoid Supabase Foreign Key schema cache errors
-      final response = await Supabase.instance.client
-          .from('return_requirements')
-          .select()
-          .ilike('origin', '%$origin%')
-          .ilike('destination', '%$dest%')
-          .eq('status', 'Active');
-          
-      // Filter by date locally for simplicity in demo
       final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate!);
-      final filteredReqs = (response as List).where((req) => req['route_date'].toString().startsWith(dateStr)).toList();
+      final response = await Supabase.instance.client
+          .from('truck_availability')
+          .select('''
+            *,
+            partners!inner(owner_name, mobile_number),
+            trucks(truck_number, truck_type, body_type, capacity_tons, capacity_kg)
+          ''')
+          .ilike('origin_city', '%$origin%')
+          .ilike('destination_city', '%$dest%')
+          .eq('status', 'available')
+          .eq('available_date', dateStr);
 
-      List<dynamic> enrichedResults = [];
-
-      // Manually fetch partner and truck info
-      for (var req in filteredReqs) {
-        var partnerData;
-        var truckData;
-        
-        try {
-          partnerData = await Supabase.instance.client
-              .from('partner_profiles')
-              .select('owner_name, mobile_number')
-              .eq('id', req['partner_id'])
-              .maybeSingle();
-        } catch (_) {} // Ignore if missing
-
-        try {
-          if (req['truck_id'] != null) {
-            truckData = await Supabase.instance.client
-                .from('trucks')
-                .select('truck_number, vehicle_type')
-                .eq('id', req['truck_id'])
-                .maybeSingle();
-          }
-        } catch (_) {}
-
-        enrichedResults.add({
-          ...req,
-          'partner_profiles': partnerData,
-          'trucks': truckData,
-        });
-      }
-
+      final enrichedResults = List<Map<String, dynamic>>.from(response as List);
       setState(() {
         _searchResults = enrichedResults;
       });
@@ -202,7 +171,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                     itemCount: _searchResults.length,
                     itemBuilder: (context, index) {
                       final req = _searchResults[index];
-                      final partner = req['partner_profiles'];
+                      final partner = req['partners'];
                       final truck = req['trucks'];
                       
                       return Card(
@@ -224,8 +193,8 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              Text('Route: ${req['origin']} to ${req['destination']}'),
-                              Text('Truck: ${truck?['vehicle_type'] ?? 'N/A'} (${truck?['truck_number'] ?? 'N/A'})'),
+                              Text('Route: ${req['origin_city']} to ${req['destination_city']}'),
+                              Text('Truck: ${truck?['truck_type'] ?? 'N/A'} (${truck?['truck_number'] ?? 'N/A'})'),
                               const SizedBox(height: 16),
                               Row(
                                 children: [
@@ -246,10 +215,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                                         
                                         // Log the contact event
                                         try {
-                                          await Supabase.instance.client.from('contact_events').insert({
+                                          await Supabase.instance.client.from('contact_logs').insert({
                                             'partner_id': req['partner_id'],
-                                            'requirement_id': req['id'],
+                                            'truck_id': req['truck_id'],
                                             'contact_type': 'call',
+                                            'source': 'consumer_app',
                                           });
                                         } catch (_) {}
                                       },
@@ -264,7 +234,7 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                                       onPressed: () async {
                                         final contactInfo = partner?['mobile_number'];
                                         if (contactInfo != null) {
-                                          final msg = 'Hello, I found your truck on Return Translink for ${req['origin']} → ${req['destination']}. I would like to discuss the transport requirement.';
+                                          final msg = 'Hello, I found your truck on Return Translink for ${req['origin_city']} → ${req['destination_city']}. I would like to discuss the transport requirement.';
                                           final url = Uri.parse('https://wa.me/$contactInfo?text=${Uri.encodeComponent(msg)}');
                                           if (await canLaunchUrl(url)) {
                                             await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -277,10 +247,11 @@ class _CustomerSearchScreenState extends State<CustomerSearchScreen> {
                                         
                                         // Log the contact event
                                         try {
-                                          await Supabase.instance.client.from('contact_events').insert({
+                                          await Supabase.instance.client.from('contact_logs').insert({
                                             'partner_id': req['partner_id'],
-                                            'requirement_id': req['id'],
+                                            'truck_id': req['truck_id'],
                                             'contact_type': 'whatsapp',
+                                            'source': 'consumer_app',
                                           });
                                         } catch (_) {}
                                       },
