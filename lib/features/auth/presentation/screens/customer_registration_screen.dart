@@ -42,18 +42,75 @@ class _CustomerRegistrationScreenState extends ConsumerState<CustomerRegistratio
     setState(() => _isLoading = true);
 
     try {
-      // Insert into customers table using phone number
-      await Supabase.instance.client.from('customers').insert({
-        'name': name,
-        'email': email.isNotEmpty ? email : null,
-        'gender': _selectedGender,
-        'phone_number': widget.phoneNumber,
-      });
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+      if (user == null) {
+        throw const AuthException('Your session expired. Please verify your mobile number again.');
+      }
+
+      final mobileNumber = user.phone ?? widget.phoneNumber;
+      final profileData = <String, dynamic>{
+        'full_name': name,
+        'mobile_number': mobileNumber,
+        if (email.isNotEmpty) 'email': email,
+        'is_verified': true,
+        'last_login_at': DateTime.now().toUtc().toIso8601String(),
+      };
+
+      // Keep one common profile per Supabase Auth user. Do not overwrite an
+      // existing Partner role when the same user registers as a Customer.
+      final existingProfile = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .maybeSingle();
+
+      if (existingProfile == null) {
+        await supabase.from('profiles').insert({
+          'auth_user_id': user.id,
+          'role': 'customer',
+          ...profileData,
+        }).select('id').single();
+      } else {
+        await supabase
+            .from('profiles')
+            .update(profileData)
+            .eq('auth_user_id', user.id)
+            .select('id')
+            .single();
+      }
+
+      // customer_registration is the Customer-specific table. The live schema
+      // has no customers table and no gender column.
+      final existingCustomer = await supabase
+          .from('customer_registration')
+          .select('id')
+          .eq('auth_user_id', user.id)
+          .maybeSingle();
+
+      final customerData = <String, dynamic>{
+        'auth_user_id': user.id,
+        'role': 'customer',
+        'full_name': name,
+        'mobile_number': mobileNumber,
+        if (email.isNotEmpty) 'email': email,
+        'is_verified': true,
+        'last_login_at': DateTime.now().toUtc().toIso8601String(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      };
+
+      if (existingCustomer == null) {
+        await supabase.from('customer_registration').insert(customerData);
+      } else {
+        await supabase
+            .from('customer_registration')
+            .update(customerData)
+            .eq('auth_user_id', user.id);
+      }
 
       if (mounted) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('logged_in_phone', widget.phoneNumber);
-        
+        await prefs.setString('logged_in_phone', mobileNumber);
         _showSnackbar('Registration safal raha!', isSuccess: true);
         context.go('/customer_search');
       }
